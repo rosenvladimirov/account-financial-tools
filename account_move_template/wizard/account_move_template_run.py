@@ -237,7 +237,7 @@ Valid dictionary to overwrite template lines:
             "partner_id": self.partner_id.id or line.partner_id.id,
             "date_maturity": date_maturity or self.date,
             "tax_repartition_line_id": line.tax_repartition_line_id.id or False,
-            "analytic_distribution": line.analytic_distribution,
+            "analytic_distribution": self._get_line_analytic_distribution(line),
         }
         if line.tax_ids:
             values["tax_ids"] = [Command.set(line.tax_ids.ids)]
@@ -261,6 +261,16 @@ Valid dictionary to overwrite template lines:
         # Use optional account, when amount is negative
         self._update_account_on_negative(line, values)
         return values
+
+    def _get_line_analytic_distribution(self, line):
+        """The analytic distribution of the wizard line (the user may have
+        changed or cleared it), else the one of the template line."""
+        wizard_line = self.line_ids.filtered(
+            lambda wiz_line: wiz_line.sequence == line.sequence
+        )[:1]
+        if wizard_line:
+            return wizard_line.analytic_distribution
+        return line.analytic_distribution
 
     def _update_account_on_negative(self, line, vals):
         if not line.opt_account_id:
