@@ -337,3 +337,90 @@ class TestAccountMoveTemplateEnhanced(AccountTestInvoicingCommon):
         msg_error = "You deleted a line in the wizard. This is not allowed:"
         with self.assertRaisesRegex(UserError, msg_error):
             wiz.generate_move()
+
+    def _analytic_template(self):
+        plan = self.env["account.analytic.plan"].create({"name": "Template plan"})
+        self.analytic_1, self.analytic_2 = self.env["account.analytic.account"].create(
+            [
+                {"name": "Analytic 1", "plan_id": plan.id},
+                {"name": "Analytic 2", "plan_id": plan.id},
+            ]
+        )
+        return self.Template.create(
+            {
+                "name": "Analytic template",
+                "journal_id": self.journal.id,
+                "line_ids": [
+                    Command.create(
+                        {
+                            "sequence": 1,
+                            "name": "Expense",
+                            "type": "input",
+                            "move_line_type": "dr",
+                            "account_id": self.expense_account_id.id,
+                            "analytic_distribution": {str(self.analytic_1.id): 100},
+                        }
+                    ),
+                    Command.create(
+                        {
+                            "sequence": 2,
+                            "name": "Payable",
+                            "type": "computed",
+                            "python_code": "L1",
+                            "move_line_type": "cr",
+                            "account_id": self.ap_account_id.id,
+                            "partner_id": self.partner0.id,
+                        }
+                    ),
+                ],
+            }
+        )
+
+    def _generate_with_wizard_analytic(self, template, distribution):
+        wiz = self.env["account.move.template.run"].create({"template_id": template.id})
+        wiz.load_lines()
+        wiz.line_ids.write({"amount": 100.0, "analytic_distribution": distribution})
+        move = self.Move.browse(wiz.generate_move()["res_id"])
+        return move.line_ids.filtered(
+            lambda line: line.account_id == self.expense_account_id
+        )
+
+    def test_move_template_wizard_analytic_distribution(self):
+        """The analytic distribution changed in the wizard goes to the entry."""
+        template = self._analytic_template()
+        line = self._generate_with_wizard_analytic(
+            template, {str(self.analytic_2.id): 100}
+        )
+        self.assertEqual(line.analytic_distribution, {str(self.analytic_2.id): 100})
+
+    def test_move_template_wizard_analytic_distribution_cleared(self):
+        """An analytic distribution cleared in the wizard stays cleared."""
+        template = self._analytic_template()
+        line = self._generate_with_wizard_analytic(template, False)
+        self.assertFalse(line.analytic_distribution)
+
+    def test_move_template_tax_repartition_line(self):
+        """The repartition line follows the document type and is reset
+        without tax."""
+        tax = self.company_data["default_tax_sale"]
+        tax_lines = (
+            tax.invoice_repartition_line_ids | tax.refund_repartition_line_ids
+        ).filtered(lambda rep: rep.repartition_type == "tax")
+        account = tax_lines.account_id[:1]
+        line = self.env["account.move.template.line"].create(
+            {
+                "template_id": self.move_template.id,
+                "sequence": 99,
+                "type": "computed",
+                "python_code": "0",
+                "move_line_type": "cr",
+                "account_id": account.id,
+                "tax_line_id": tax.id,
+                "is_refund": True,
+            }
+        )
+        self.assertEqual(line.tax_repartition_line_id.document_type, "refund")
+        line.is_refund = False
+        self.assertEqual(line.tax_repartition_line_id.document_type, "invoice")
+        line.tax_line_id = False
+        self.assertFalse(line.tax_repartition_line_id)

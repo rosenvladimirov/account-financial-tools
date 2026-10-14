@@ -67,7 +67,6 @@
                             <field name="move_line_type" />
                             <field name="type" widget="radio" />
                             <field name="note" />
-                    >
                         <div
                                 name="python_code_help"
                                 colspan="2"
